@@ -33,13 +33,22 @@ themeToggle.addEventListener('click', () => {
 
 const menuToggle = $('#menuToggle');
 const nav = $('#mainNav');
+function closeMenu() {
+  nav.classList.remove('open');
+  menuToggle.setAttribute('aria-expanded', 'false');
+}
 menuToggle.addEventListener('click', () => {
   const open = nav.classList.toggle('open');
   menuToggle.setAttribute('aria-expanded', String(open));
 });
-nav.querySelectorAll('a').forEach(a => a.addEventListener('click', () => {
-  nav.classList.remove('open'); menuToggle.setAttribute('aria-expanded', 'false');
-}));
+// 手机上点菜单外部或按 Esc 收起，避免菜单一直挂着挡住内容。
+document.addEventListener('click', event => {
+  if (!nav.classList.contains('open')) return;
+  if (nav.contains(event.target) || menuToggle.contains(event.target)) return;
+  closeMenu();
+});
+document.addEventListener('keydown', event => { if (event.key === 'Escape') closeMenu(); });
+nav.querySelectorAll('a').forEach(a => a.addEventListener('click', closeMenu));
 $('#year').textContent = new Date().getFullYear();
 
 // Music player
@@ -108,13 +117,27 @@ loadSong(0);
 
 // Gallery: preview image uses same PNG source, click opens original in dialog.
 const imageDialog = $('#imageDialog');
+// 旧版 iOS Safari 不支持 <dialog>.showModal，退化成普通覆盖层，避免点了没反应。
+function openLightbox() {
+  if (typeof imageDialog.showModal === 'function') { imageDialog.showModal(); return; }
+  imageDialog.setAttribute('open', '');
+  imageDialog.classList.add('dialog-fallback');
+  document.body.style.overflow = 'hidden';
+}
+function closeLightbox() {
+  if (typeof imageDialog.close === 'function') { imageDialog.close(); return; }
+  imageDialog.removeAttribute('open');
+  imageDialog.classList.remove('dialog-fallback');
+  document.body.style.overflow = '';
+}
 document.querySelectorAll('.gallery-item').forEach(item => item.addEventListener('click', () => {
   $('#lightboxImage').src = item.dataset.full;
   $('#imageCaption').textContent = item.querySelector('span')?.textContent || '';
-  imageDialog.showModal();
+  openLightbox();
 }));
-$('#closeImage').addEventListener('click', () => imageDialog.close());
-imageDialog.addEventListener('click', event => { if (event.target === imageDialog) imageDialog.close(); });
+$('#closeImage').addEventListener('click', closeLightbox);
+imageDialog.addEventListener('click', event => { if (event.target === imageDialog) closeLightbox(); });
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && imageDialog.open) closeLightbox(); });
 
 // Game sub-pages. Edit these values to fill in your real game account statistics.
 const gameProfiles = {
