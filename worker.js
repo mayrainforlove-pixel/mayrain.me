@@ -32,7 +32,14 @@ async function currentUser(request,env){const s=await verify(getCookie(request,C
 async function sendMail(env,to,subject,html,text){
   if(!env.RESEND_API_KEY||!env.MAIL_FROM) throw new Error('email_not_configured');
   const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${env.RESEND_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({from:env.MAIL_FROM,to:[to],subject,html,text})});
-  if(!r.ok) throw new Error(`email_provider_${r.status}`);
+  if(!r.ok){
+    // 把发信服务返回的原始说明带出来，否则前端只能看到一句 server_error。
+    let detail='';
+    try{ detail=(await r.text()).slice(0,300); }catch{}
+    const err=new Error('email_provider_error');
+    err.providerStatus=r.status; err.providerDetail=detail;
+    throw err;
+  }
 }
 function validUsername(s){return /^[a-zA-Z0-9_]{3,20}$/.test(s);}
 function validEmail(s){return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)&&s.length<=254;}
@@ -143,6 +150,16 @@ async function handle(request,env){
       return json({...await nudgeState(env,u),ok:true},200,h);
     }
     return new Response('Not found',{status:404});
-  }catch(e){console.error('MayRain Worker error',e);return json({error:e.message==='email_not_configured'?'email_service_not_configured':'server_error'},e.message==='email_not_configured'?503:500,h);}
+  }catch(e){
+    console.error('MayRain Worker error',e);
+    if(e&&e.message==='email_not_configured') return json({error:'email_service_not_configured'},503,h);
+    if(e&&e.providerStatus){
+      const hint=e.providerStatus===401?'Resend API Key 无效或已被删除'
+        :(e.providerStatus===403?'发件域名未在 Resend 验证，或 MAIL_FROM 与已验证域名不一致'
+        :(e.providerStatus===422?'发件地址或收件地址被 Resend 拒绝':'发信服务返回错误'));
+      return json({error:`邮件发送失败（HTTP ${e.providerStatus}）：${hint}`,code:'email_provider_error',status:e.providerStatus,detail:e.providerDetail||''},502,h);
+    }
+    return json({error:'server_error',detail:String((e&&e.message)||e).slice(0,300)},500,h);
+  }
 }
 export default {fetch:handle};

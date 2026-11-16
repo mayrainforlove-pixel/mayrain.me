@@ -65,3 +65,16 @@ node -e "fetch('https://mayrain.me/api/nudge').then(async r=>console.log(r.statu
 - 音乐只有一首，代码里支持多首，但加歌需要改 `musicList` 并上传文件。
 - 日志内容是静态页面里手写的，没有后台发布功能（按你的要求：只有你自己写，访客只能催更/留言）。
 - 邮件依赖 Resend 免费额度（100 封/天），超了会返回发信失败。
+
+## 手机端修复（2026-11-16，仅前端）
+
+本轮只改前端 3 个文件，Worker 和数据库不用动：
+
+- `index.html`（css/js 引用加了 `?v=2`）
+- `css/style.css`
+- `js/script.js`
+
+上传到 GitHub Pages 仓库后，如果手机还看到旧样式，说明 Cloudflare 边缘还缓存着旧文件，按 URL 清一次：
+
+- `https://mayrain.me/index.html`
+- `https://mayrain.me/`
