@@ -70,13 +70,44 @@ function syncPlayback() {
   playBtn.textContent = audio.paused ? '▶' : 'Ⅱ';
   $('#vinyl').classList.toggle('spinning', !audio.paused);
 }
+// 微信内置浏览器（X5 / WKWebView）会拦截 audio.play()，必须走 WeixinJSBridge 才能出声。
+function playWithBridge() {
+  return new Promise((resolve, reject) => {
+    const attempt = () => {
+      const result = audio.play();
+      if (result && typeof result.then === 'function') result.then(resolve).catch(reject);
+      else resolve();
+    };
+    if (window.WeixinJSBridge && typeof window.WeixinJSBridge.invoke === 'function') {
+      try { window.WeixinJSBridge.invoke('getNetworkType', {}, attempt, attempt); return; }
+      catch { /* 桥接调用失败就退回普通播放 */ }
+    }
+    attempt();
+  });
+}
+function isWeChat() { return /MicroMessenger/i.test(navigator.userAgent); }
 async function startPlayback() {
-  try { await audio.play(); }
-  catch (error) {
-    $('#trackStatus').textContent = error && error.name === 'NotAllowedError'
-      ? '浏览器拦截了自动播放，请再点一次播放按钮'
-      : await describeAudioError();
+  try {
+    // iOS 上如果元数据还没加载完，在点击手势里补一次 load()，否则 play() 会被静默拒绝。
+    if (audio.readyState === 0) audio.load();
+    // 4MB 的音频在移动网络上要缓冲一会，先给个反馈，别让人以为按钮没反应。
+    if (audio.readyState < 3) $('#trackStatus').textContent = '正在加载音频……';
+    await playWithBridge();
+    const fallback = $('#audioFallback');
+    if (fallback) fallback.hidden = true;
+  } catch (error) {
     console.error('Audio playback error:', error);
+    if (error && error.name === 'NotAllowedError') {
+      $('#trackStatus').textContent = isWeChat()
+        ? '微信内置浏览器拦截了音频，点右上角「在浏览器打开」再播放'
+        : '浏览器拦截了自动播放，请再点一次播放按钮';
+    } else {
+      $('#trackStatus').textContent = isWeChat()
+        ? '微信内置浏览器播不了，点右上角「在浏览器打开」再试'
+        : await describeAudioError();
+    }
+    const fallback = $('#audioFallback');
+    if (fallback) fallback.hidden = false;
   }
 }
 playBtn.addEventListener('click', () => audio.paused ? startPlayback() : audio.pause());
@@ -89,6 +120,10 @@ nextBtn.hidden = !hasMultipleTracks;
 prevBtn.addEventListener('click', () => { if (hasMultipleTracks) { loadSong(currentSongIndex - 1); startPlayback(); } });
 nextBtn.addEventListener('click', () => { if (hasMultipleTracks) { loadSong(currentSongIndex + 1); startPlayback(); } });
 audio.addEventListener('play', syncPlayback);
+audio.addEventListener('playing', () => {
+  const song = musicList[currentSongIndex];
+  if (song) $('#trackStatus').textContent = `${song.artist} · 正在播放`;
+});
 audio.addEventListener('pause', syncPlayback);
 audio.addEventListener('loadedmetadata', () => { $('#duration').textContent = formatTime(audio.duration); });
 audio.addEventListener('timeupdate', () => {
@@ -108,6 +143,8 @@ async function describeAudioError() {
 audio.addEventListener('error', async () => {
   $('#trackStatus').textContent = '音频加载失败，正在检查原因……';
   $('#trackStatus').textContent = await describeAudioError();
+  const fallback = $('#audioFallback');
+  if (fallback) fallback.hidden = false;
   syncPlayback();
 });
 progress.addEventListener('input', () => {
