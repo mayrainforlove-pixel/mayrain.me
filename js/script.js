@@ -12,7 +12,7 @@ const safeWrite = (key, value) => {
 
 // 内置歌曲：文件已随网站打包，不需要访客上传。
 const musicList = [
-  { name: 'Take Me Hand', artist: 'DAISHI DANCE', src: 'assets/music/DAISHI%20DANCE%20(%E3%83%80%E3%82%A4%E3%82%B7%E3%83%BB%E3%83%80%E3%83%B3%E3%82%B9)%20-%20Take%20Me%20Hand%20%5Bmqms2%5D.mp3' }
+  { name: 'Take Me Hand', artist: 'DAISHI DANCE', src: 'assets/music/take-me-hand.mp3' }
 ];
 let currentSongIndex = 0;
 const playBtn = $('#playBtn');
@@ -64,13 +64,21 @@ function syncPlayback() {
 async function startPlayback() {
   try { await audio.play(); }
   catch (error) {
-    $('#trackStatus').textContent = '播放失败，请检查音频文件或浏览器设置';
+    $('#trackStatus').textContent = error && error.name === 'NotAllowedError'
+      ? '浏览器拦截了自动播放，请再点一次播放按钮'
+      : await describeAudioError();
     console.error('Audio playback error:', error);
   }
 }
 playBtn.addEventListener('click', () => audio.paused ? startPlayback() : audio.pause());
-$('#prevBtn').addEventListener('click', () => { loadSong(currentSongIndex - 1); startPlayback(); });
-$('#nextBtn').addEventListener('click', () => { loadSong(currentSongIndex + 1); startPlayback(); });
+const prevBtn = $('#prevBtn');
+const nextBtn = $('#nextBtn');
+// 只有一首曲目时不显示切歌按钮，避免“按钮在但点了没反应”。
+const hasMultipleTracks = musicList.length > 1;
+prevBtn.hidden = !hasMultipleTracks;
+nextBtn.hidden = !hasMultipleTracks;
+prevBtn.addEventListener('click', () => { if (hasMultipleTracks) { loadSong(currentSongIndex - 1); startPlayback(); } });
+nextBtn.addEventListener('click', () => { if (hasMultipleTracks) { loadSong(currentSongIndex + 1); startPlayback(); } });
 audio.addEventListener('play', syncPlayback);
 audio.addEventListener('pause', syncPlayback);
 audio.addEventListener('loadedmetadata', () => { $('#duration').textContent = formatTime(audio.duration); });
@@ -78,8 +86,21 @@ audio.addEventListener('timeupdate', () => {
   $('#currentTime').textContent = formatTime(audio.currentTime);
   if (Number.isFinite(audio.duration) && audio.duration > 0) progress.value = audio.currentTime / audio.duration * 100;
 });
-audio.addEventListener('ended', () => { loadSong(currentSongIndex + 1); startPlayback(); });
-audio.addEventListener('error', () => { $('#trackStatus').textContent = '音乐文件加载失败，请检查 assets/music/ 中的文件'; syncPlayback(); });
+audio.addEventListener('ended', () => { if (hasMultipleTracks) { loadSong(currentSongIndex + 1); startPlayback(); } else { syncPlayback(); } });
+// 失败时区分「文件没部署（404）」和「浏览器解码失败」，不要只给一句笼统提示。
+async function describeAudioError() {
+  try {
+    const response = await fetch(audio.currentSrc || audio.src, { method: 'HEAD', cache: 'no-store' });
+    if (response.status === 404) return '音频文件 404：assets/music/take-me-hand.mp3 没有部署上去，播放器本身没问题';
+    if (!response.ok) return `音频文件返回 ${response.status}，请检查部署配置`;
+    return '浏览器无法解码这个音频文件，请确认它确实是有效的 MP3';
+  } catch { return '音频文件请求失败，请检查网络或部署路径'; }
+}
+audio.addEventListener('error', async () => {
+  $('#trackStatus').textContent = '音频加载失败，正在检查原因……';
+  $('#trackStatus').textContent = await describeAudioError();
+  syncPlayback();
+});
 progress.addEventListener('input', () => {
   if (Number.isFinite(audio.duration) && audio.duration > 0) audio.currentTime = audio.duration * Number(progress.value) / 100;
 });
@@ -149,35 +170,6 @@ $('#backToSite').addEventListener('click', () => {
   window.scrollTo({top:document.querySelector('#games').offsetTop - 70,behavior:'smooth'});
 });
 
-// Blog local drafts
-function renderPosts() {
-  const posts = safeRead('mayrain-posts');
-  const list = $('#blogList');
-  list.querySelectorAll('[data-user-post]').forEach(el => el.remove());
-  posts.forEach(post => {
-    if (!post || typeof post !== 'object') return;
-    const article = document.createElement('article'); article.className = 'post-card'; article.dataset.userPost = 'true';
-    const date = document.createElement('span'); date.className = 'post-date'; date.textContent = `${String(post.date || '')} · JOURNAL`;
-    const title = document.createElement('h3'); title.textContent = String(post.title || '无标题');
-    const body = document.createElement('p'); body.textContent = String(post.body || '');
-    const label = document.createElement('span'); label.className = 'mini-label'; label.textContent = 'PERSONAL NOTE';
-    article.append(date,title,body,label); list.prepend(article);
-  });
-}
-renderPosts();
-const postDialog = $('#postDialog');
-$('#newPostBtn').addEventListener('click', () => postDialog.showModal());
-$('#postForm').addEventListener('submit', event => {
-  if (event.submitter?.value === 'cancel') return;
-  event.preventDefault();
-  const title = $('#postTitle').value.trim(), body = $('#postBody').value.trim();
-  if (!title || !body) return;
-  const posts = safeRead('mayrain-posts');
-  posts.unshift({title,body,date:new Date().toLocaleDateString('zh-CN')});
-  if (!safeWrite('mayrain-posts',posts)) return alert('日志保存失败，请检查浏览器存储空间。');
-  renderPosts(); postDialog.close(); $('#postForm').reset();
-});
-
 // Account-based guestbook. Authentication is enforced by the Worker; no password is stored in the browser.
 let currentUser = null;
 const API_BASE = '';
@@ -185,55 +177,134 @@ async function api(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, { credentials:'include', ...options,
     headers:{'Content-Type':'application/json', ...(options.headers || {})} });
   const data = await response.json().catch(()=>({}));
-  if (!response.ok) throw new Error(data.error || `API ${response.status}`);
+  if (!response.ok) {
+    const err = new Error(data.error || `API ${response.status}`);
+    err.status = response.status;
+    throw err;
+  }
   return data;
 }
+// 把接口错误翻译成用户看得懂的话：Worker 没部署/邮件没配置是最常见的两种情况。
+function friendlyApiError(err){
+  const text=String((err&&err.message)||err||'请求失败');
+  if(err&&(err.status===404||err.status===501)) return `接口不可用（HTTP ${err.status}），请确认 Worker 已部署到最新版本。`;
+  if(text==='email_service_not_configured') return '邮件服务尚未配置：请在 Worker 里设置 RESEND_API_KEY 与 MAIL_FROM。';
+  if(err&&err.status===403&&text==='origin_not_allowed') return '当前域名不在 Worker 白名单（SITE_ORIGIN）里。';
+  if(err&&err.status===503&&text==='server_not_configured') return 'Worker 缺少 D1 数据库或 SESSION_SECRET 配置。';
+  return text;
+}
 let authMode='login';
+const AUTH_HINTS={
+  login:'用注册时填写的邮箱和密码登录。还没有账号？先点「注册」。',
+  register:'注册三步：填写邮箱 → 点「发送验证码」并填入邮件里的 6 位验证码 → 设置至少 10 位密码。',
+  forgot:'填写注册邮箱，我们会把密码重置链接发到该邮箱。'
+};
+const AUTH_SUBMIT_LABEL={login:'登录',register:'完成注册',forgot:'发送找回邮件'};
 function setAuthMode(mode){
   authMode=mode;
   document.querySelectorAll('[data-auth-tab]').forEach(b=>b.classList.toggle('active',b.dataset.authTab===mode));
-  $('#authUsernameWrap').hidden=mode==='forgot';
-  $('#authEmailWrap').hidden=mode==='login';
+  $('#authEmailWrap').hidden=false;
+  $('#authCodeWrap').hidden=mode!=='register';
   $('#authPasswordWrap').hidden=mode==='forgot';
-  $('#authSubmit').textContent=({login:'登录',register:'创建账号',forgot:'发送找回邮件'})[mode];
+  $('#authCode').required=mode==='register';
+  $('#authPassword').placeholder=mode==='register'?'至少10位':'请输入密码';
+  $('#authSubmit').textContent=AUTH_SUBMIT_LABEL[mode];
+  $('#authHint').textContent=AUTH_HINTS[mode]||'';
+  $('#authPassword').autocomplete=mode==='register'?'new-password':'current-password';
   $('#authMessage').textContent='';
 }
 document.querySelectorAll('[data-auth-tab]').forEach(b=>b.addEventListener('click',()=>setAuthMode(b.dataset.authTab)));
 $('#authOpenBtn').addEventListener('click',()=>{$('#authForm').hidden=!$('#authForm').hidden;setAuthMode('login');});
-$('#logoutBtn').addEventListener('click',async()=>{try{await api('/auth/logout',{method:'POST'});}catch{}currentUser=null;updateAuthUI();});
+$('#logoutBtn').addEventListener('click',async()=>{try{await api('/auth/logout',{method:'POST'});}catch{}currentUser=null;$('#authMessage').textContent='';updateAuthUI();});
 function updateAuthUI(){
   $('#loginState').textContent=currentUser?`已登录：${currentUser.username}`:'尚未登录';
   $('#authOpenBtn').hidden=!!currentUser;$('#logoutBtn').hidden=!currentUser;
-  $('#guestbookNote').textContent=currentUser?`当前账号：${currentUser.username}。可使用账号昵称留言，也可匿名。`:'登录后显示注册昵称；匿名留言无需登录。';
+  $('#guestMessage').disabled=!currentUser;$('#guestSubmit').disabled=!currentUser;
+  $('#guestMessage').placeholder=currentUser?'写下你想说的话……':'请先注册并登录后留言';
+  $('#guestbookNote').textContent=currentUser?`当前已登录为 ${currentUser.email}，留言将以账号名称显示。`:'请先注册并登录，再发布留言。未注册账号无法登录。';
+  if(typeof loadNudge==='function')loadNudge();
 }
 async function checkLogin(){try{const r=await api('/api/me');currentUser=r.user||null;}catch{currentUser=null;}updateAuthUI();}
+
+// 催更：只有登录用户可以点，每个账号每天一次。
+const nudgeBtn=$('#nudgeBtn'), nudgeCount=$('#nudgeCount');
+function renderNudge(state){
+  if(!state)return;
+  nudgeCount.textContent=`今天 ${Number(state.today||0)} 次 · 累计 ${Number(state.total||0)} 次`;
+  if(currentUser){
+    nudgeBtn.disabled=!!state.nudged;
+    nudgeBtn.textContent=state.nudged?'今天已催更':'催更一下 ↑';
+    nudgeBtn.title=state.nudged?'每个账号每天可以催更一次':'点一下提醒作者更新';
+  }else{
+    nudgeBtn.disabled=true;nudgeBtn.textContent='催更一下 ↑';nudgeBtn.title='注册并登录后可以催更';
+  }
+}
+async function loadNudge(){try{renderNudge(await api('/api/nudge'));}catch{/* 催更不可用时保持禁用态 */}}
+nudgeBtn.addEventListener('click',async()=>{
+  if(!currentUser){$('#authForm').hidden=false;setAuthMode('register');$('#authEmail').focus();return;}
+  nudgeBtn.disabled=true;
+  try{renderNudge(await api('/api/nudge',{method:'POST'}));}
+  catch(err){await loadNudge();console.warn('nudge failed:',err);}
+});
+loadNudge();
+
+// 验证码 60 秒重发冷却，按钮上显示倒计时。
+let codeCooldown=0, codeTimer=null;
+function startCooldown(seconds){
+  const btn=$('#sendCodeBtn');
+  codeCooldown=Math.max(1,Math.floor(seconds));
+  btn.disabled=true;btn.textContent=`${codeCooldown}s 后重发`;
+  clearInterval(codeTimer);
+  codeTimer=setInterval(()=>{
+    codeCooldown-=1;
+    if(codeCooldown<=0){clearInterval(codeTimer);codeTimer=null;codeCooldown=0;btn.disabled=false;btn.textContent='发送验证码';return;}
+    btn.textContent=`${codeCooldown}s 后重发`;
+  },1000);
+}
+$('#sendCodeBtn').addEventListener('click',async()=>{
+  if(codeCooldown>0)return;
+  const email=$('#authEmail').value.trim(),msg=$('#authMessage');
+  if(!email){msg.textContent='请先填写邮箱地址。';$('#authEmail').focus();return;}
+  msg.textContent='正在发送验证码……';
+  const btn=$('#sendCodeBtn');btn.disabled=true;
+  try{
+    const r=await api('/auth/send-code',{method:'POST',body:JSON.stringify({email})});
+    msg.textContent=r.message||'验证码已发送，请检查邮箱。';
+    startCooldown(60);
+    $('#authCode').focus();
+  }catch(err){
+    const text=String(err.message||'');
+    msg.textContent=friendlyApiError(err);
+    const wait=Number((text.match(/(\d+)\s*秒/)||[])[1]);
+    if(wait>0) startCooldown(wait); else btn.disabled=false;
+  }
+});
 $('#authForm').addEventListener('submit',async e=>{
   e.preventDefault();const msg=$('#authMessage');msg.textContent='处理中……';
-  const username=$('#authUsername').value.trim(),email=$('#authEmail').value.trim(),password=$('#authPassword').value;
+  const email=$('#authEmail').value.trim(),password=$('#authPassword').value,code=$('#authCode').value.trim();
   try{
     if(authMode==='forgot'){
       const r=await api('/auth/forgot',{method:'POST',body:JSON.stringify({email})});msg.textContent=r.message||'如果邮箱已注册，将收到重置邮件。';return;
     }
     const path=authMode==='register'?'/auth/register':'/auth/login';
-    const body=authMode==='register'?{username,email,password}:{login:username,password};
-    const r=await api(path,{method:'POST',body:JSON.stringify(body)});currentUser=r.user;updateAuthUI();$('#authForm').hidden=true;$('#authForm').reset();
-  }catch(err){msg.textContent=err.message==='email_service_not_configured'?'邮件服务尚未配置，暂时无法发送找回邮件。':err.message;}
+    const body=authMode==='register'?{email,password,code}:{email,password};
+    const r=await api(path,{method:'POST',body:JSON.stringify(body)});currentUser=r.user;$('#authMessage').textContent='';updateAuthUI();$('#authForm').hidden=true;$('#authForm').reset();
+  }catch(err){msg.textContent=friendlyApiError(err);}
 });
 const resetToken=new URLSearchParams(location.search).get('reset');
 if(resetToken){$('#resetForm').hidden=false;$('#authForm').hidden=true;}
-$('#resetForm').addEventListener('submit',async e=>{e.preventDefault();const msg=$('#resetMessage');msg.textContent='正在更新……';try{const r=await api('/auth/reset',{method:'POST',body:JSON.stringify({token:resetToken,password:$('#resetPassword').value})});msg.textContent=r.message||'密码已更新';}catch(err){msg.textContent=err.message;}});
+$('#resetForm').addEventListener('submit',async e=>{e.preventDefault();const msg=$('#resetMessage');msg.textContent='正在更新……';try{const r=await api('/auth/reset',{method:'POST',body:JSON.stringify({token:resetToken,password:$('#resetPassword').value})});msg.textContent=r.message||'密码已更新';}catch(err){msg.textContent=friendlyApiError(err);}});
 async function renderGuestbook(){
   const list=$('#guestList');list.replaceChildren();
   try{const result=await api('/api/guestbook');(result.entries||[]).forEach(entry=>{
-    const item=document.createElement('div');item.className='guest-entry';const author=document.createElement('strong');author.textContent=entry.anonymous?'匿名访客':String(entry.display_name||'注册用户');
+    const item=document.createElement('div');item.className='guest-entry';const author=document.createElement('strong');author.textContent=String(entry.display_name||'注册用户');
     const time=document.createElement('time');time.textContent=String(entry.created_at||'');const message=document.createElement('p');message.textContent=String(entry.message||'');item.append(author,time,message);list.append(item);
   });}catch{const n=document.createElement('p');n.className='muted';n.textContent='留言列表暂时无法加载。';list.append(n);}
 }
 $('#guestForm').addEventListener('submit',async e=>{
   e.preventDefault();const message=$('#guestMessage').value.trim();if(!message)return;
-  const anonymous=document.querySelector('input[name="identityMode"]:checked').value==='anonymous';
-  if(!anonymous&&!currentUser){alert('请先登录或注册；也可以选择匿名留言。');$('#authForm').hidden=false;setAuthMode('login');return;}
-  try{await api('/api/guestbook',{method:'POST',body:JSON.stringify({message,anonymous})});$('#guestMessage').value='';await renderGuestbook();}
+  if(!currentUser){alert('请先注册并登录后再留言。');$('#authForm').hidden=false;setAuthMode('register');return;}
+  try{await api('/api/guestbook',{method:'POST',body:JSON.stringify({message})});$('#guestMessage').value='';await renderGuestbook();}
   catch(err){alert(err.message==='login_required'?'登录状态已失效，请重新登录。':'留言发布失败，请稍后重试。');}
 });
 checkLogin();renderGuestbook();
