@@ -44,7 +44,11 @@
 .game-bio-panel p{font-size:13px;color:var(--muted);line-height:1.9}
 [hidden]{display:none!important}
 @media(max-width:760px){
- .guestbook-heading{align-items:flex-start;flex-direction:column}
+ /* 手机上留言板标题行与桌面保持一致：说明在左、登录状态与按钮在右，不拆成两行。 */
+ .guestbook-heading{align-items:center;flex-direction:row;flex-wrap:wrap;gap:10px}
+ .guestbook-heading>div:first-child{flex:1 1 100%}
+ #authArea{justify-content:flex-end;align-items:center;margin-left:auto}
+ .guestbook-heading h3{margin-bottom:2px}
  .game-detail-grid{grid-template-columns:1fr}
  .game-cover-panel{min-height:210px}
  .player-controls{gap:7px}
@@ -55,7 +59,7 @@
 .auth-tabs{grid-column:1/-1;display:flex;gap:8px}.auth-tab{border:1px solid var(--line);background:var(--surface);color:var(--muted);padding:8px 14px;border-radius:10px;font-size:12px}.auth-tab.active{background:var(--accent);color:white;border-color:var(--accent)}
 .auth-field{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;font-size:11px;color:var(--muted)}.auth-field input{width:100%;border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:10px;padding:10px 12px;font-size:12px}
 #authSubmit,.auth-panel .guestbook-note{align-self:end}.auth-panel p{grid-column:1/-1;margin:0}
-@media(max-width:760px){.auth-panel{grid-template-columns:minmax(0,1fr)}#authArea{align-items:flex-start}}
+@media(max-width:760px){.auth-panel{grid-template-columns:minmax(0,1fr)}}
 
 /* Account and player usability refinements */
 .code-row{display:flex;gap:8px;align-items:center;min-width:0}.code-row input{min-width:0;flex:1}
@@ -104,3 +108,5 @@
 /* 旧版 iOS Safari 不支持 <dialog> 时，用普通覆盖层兜底 */
 dialog.dialog-fallback{position:fixed;inset:0;margin:auto;z-index:60;display:block;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:0;max-width:92vw;max-height:88vh;overflow:auto}
 
+/* 播不了时的兜底链接 */
+.audio-fallback{grid-column:1/-1;justify-self:start;margin-top:6px;font-size:12px;color:var(--accent);text-decoration:underline}
